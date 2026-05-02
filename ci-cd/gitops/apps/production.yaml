@@ -1,0 +1,26 @@
+# Production — NO automated sync; requires manual approval in Argo CD UI
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ecommerce-api-production
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/gitops-repo
+    targetRevision: HEAD
+    path: helm/ecommerce-api
+    helm:
+      valueFiles:
+        - values.yaml
+        - envs/production.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ecommerce-production
+  # syncPolicy intentionally omitted — manual sync only
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground

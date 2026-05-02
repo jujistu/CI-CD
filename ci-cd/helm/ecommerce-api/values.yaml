@@ -1,0 +1,75 @@
+# Default values — overridden per environment in envs/
+replicaCount: 2
+
+image:
+  repository: ghcr.io/your-org/ecommerce-api
+  pullPolicy: IfNotPresent
+  tag: "sha-latest"  # CI updates this field per environment
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3001
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  host: api.example.com
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Probes — tuned for NestJS startup time
+livenessProbe:
+  httpGet:
+    path: /api/v1/health
+    port: 3001
+  initialDelaySeconds: 20
+  periodSeconds: 15
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /api/v1/health
+    port: 3001
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  failureThreshold: 3
+
+# Rolling update — zero downtime
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# Env vars injected from Kubernetes Secret (not hardcoded)
+envFromSecret: ecommerce-api-secret
+
+# Extra env vars (non-sensitive)
+env:
+  NODE_ENV: production
+  PORT: "3001"
+
+serviceAccount:
+  create: true
+  name: ecommerce-api
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3001"
+  prometheus.io/path: "/metrics"
