@@ -6,14 +6,10 @@ on:
   pull_request:
     branches: [ main, develop ]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
-  actions: write
   pull-requests: read
+  packages: write
   security-events: write
 
 env:
@@ -21,234 +17,60 @@ env:
   IMAGE_NAME: ecommerce-api
 
 jobs:
-  # ─── Stage 1: Shift-left security (fail fast) ────────────────────────────
+
   security:
-    name: Security Scan
     uses: ./.github/workflows/reusable-security-scan.yml
     secrets: inherit
 
-  # ─── Stage 2: Build ───────────────────────────────────────────────────────
-  build:
-    name: Build
-    needs: security
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: api/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: api
-
-      - name: Build NestJS
-        run: npm run build
-        working-directory: api
-
-      - name: Cache build output
-        uses: actions/cache@v4
-        with:
-          path: api/dist
-          key: build-${{ github.sha }}
-
-  # ─── Stage 3: Tests (parallel per module) ────────────────────────────────
   test:
-    name: Tests
-    needs: build
+    needs: security
     uses: ./.github/workflows/reusable-test.yml
     with:
       coverage-threshold: 80
 
-  # ─── Stage 4: Code Quality ────────────────────────────────────────────────
-  sonarqube:
-    name: SonarQube Analysis
+  build:
     needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # required for blame info
+    uses: ./.github/workflows/reusable-build-push.yml
+    with:
+      registry: ${{ env.REGISTRY }}
+      image-name: ${{ env.IMAGE_NAME }}
+      environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name ==
+        'develop' && 'dev' || 'staging' }}
+      push: ${{ github.event_name != 'pull_request' }}
+    secrets: inherit
 
-      - name: Download coverage report
-        uses: actions/download-artifact@v4
-        with:
-          name: coverage-report
-          path: api/coverage
+  image-scan:
+    needs: build
+    uses: ./.github/workflows/reusable-security-scan.yml
+    with:
+      image-ref: ${{ needs.build.outputs.image-digest }}
+    secrets: inherit
 
-      - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@master
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
-  # ─── Stage 5 & 6: Containerize + Image Scan ──────────────────────────────
-  containerize:
-    name: Build & Scan Image
-    needs: sonarqube
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-      security-events: write
-    outputs:
-      image-tag: ${{ steps.meta.outputs.tags }}
-      short-sha: ${{ steps.sha.outputs.short }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Get short SHA
-        id: sha
-        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,prefix=sha-,format=short
-            type=semver,pattern={{version}}
-            type=raw,value=${{ github.ref_name }}-latest
-
-      - name: Build image (no push yet — scan first)
-        uses: docker/build-push-action@v5
-        with:
-          context: api
-          file: api/Dockerfile
-          push: false
-          load: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Trivy image scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME
-            }}:sha-${{ steps.sha.outputs.short }}
-          severity: CRITICAL,HIGH
-          exit-code: "1"
-          format: sarif
-          output: trivy-image.sarif
-
-      - uses: github/codeql-action/upload-sarif@v4
-        if: always()
-        with:
-          sarif_file: trivy-image.sarif
-
-      - name: Push image (only after scan passes)
-        uses: docker/build-push-action@v5
-        with:
-          context: api
-          file: api/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-
-  # ─── Stage 7: Deploy Trigger (GitOps) ────────────────────────────────────
-  deploy-dev:
-    name: Deploy → Dev
-    needs: containerize
-    if: github.ref == 'refs/heads/develop'
-    runs-on: ubuntu-latest
-    environment: dev
-    steps:
-      - name: Update GitOps repo (Helm values)
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITOPS_TOKEN }}
-          script: |
-            const shortSha = '${{ needs.containerize.outputs.short-sha }}';
-            const imageTag = `sha-${shortSha}`;
-            const { data: file } = await github.rest.repos.getContent({
-              owner: context.repo.owner,
-              repo: '${{ secrets.GITOPS_REPO }}',
-              path: 'envs/dev/values.yaml',
-            });
-            const content = Buffer.from(file.content, 'base64').toString();
-            const updated = content.replace(/tag: .+/, `tag: ${imageTag}`);
-            await github.rest.repos.createOrUpdateFileContents({
-              owner: context.repo.owner,
-              repo: '${{ secrets.GITOPS_REPO }}',
-              path: 'envs/dev/values.yaml',
-              message: `chore(gitops): update dev image to ${imageTag} [skip ci]`,
-              content: Buffer.from(updated).toString('base64'),
-              sha: file.sha,
-            });
-
-  deploy-staging:
-    name: Deploy → Staging
-    needs: containerize
-    if: startsWith(github.ref, 'refs/heads/release/')
-    runs-on: ubuntu-latest
-    environment: staging
-    steps:
-      - name: Update GitOps repo (staging)
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITOPS_TOKEN }}
-          script: |
-            const shortSha = '${{ needs.containerize.outputs.short-sha }}';
-            const imageTag = `sha-${shortSha}`;
-            const { data: file } = await github.rest.repos.getContent({
-              owner: context.repo.owner,
-              repo: '${{ secrets.GITOPS_REPO }}',
-              path: 'envs/staging/values.yaml',
-            });
-            const content = Buffer.from(file.content, 'base64').toString();
-            const updated = content.replace(/tag: .+/, `tag: ${imageTag}`);
-            await github.rest.repos.createOrUpdateFileContents({
-              owner: context.repo.owner,
-              repo: '${{ secrets.GITOPS_REPO }}',
-              path: 'envs/staging/values.yaml',
-              message: `chore(gitops): update staging image to ${imageTag} [skip ci]`,
-              content: Buffer.from(updated).toString('base64'),
-              sha: file.sha,
-            });
-
-  deploy-production:
-    name: Deploy → Production
-    needs: containerize
+  deploy:
+    needs: image-scan
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: production # requires manual approval in GitHub Environments
+
     steps:
-      - name: Update GitOps repo (production)
-        uses: actions/github-script@v7
+      - uses: actions/checkout@v4
         with:
-          github-token: ${{ secrets.GITOPS_TOKEN }}
-          script: |
-            const shortSha = '${{ needs.containerize.outputs.short-sha }}';
-            const imageTag = `sha-${shortSha}`;
-            const { data: file } = await github.rest.repos.getContent({
-              owner: context.repo.owner,
-              repo: '${{ secrets.GITOPS_REPO }}',
-              path: 'envs/production/values.yaml',
-            });
-            const content = Buffer.from(file.content, 'base64').toString();
-            const updated = content.replace(/tag: .+/, `tag: ${imageTag}`);
-            await github.rest.repos.createOrUpdateFileContents({
-              owner: context.repo.owner,
-              repo: '${{ secrets.GITOPS_REPO }}',
-              path: 'envs/production/values.yaml',
-              message: `chore(gitops): update production image to ${imageTag} [skip ci]`,
-              content: Buffer.from(updated).toString('base64'),
-              sha: file.sha,
-            });
+          repository: ${{ secrets.GITOPS_REPO }}
+          token: ${{ secrets.GITOPS_TOKEN }}
+          path: gitops
+
+      - run: sudo snap install yq
+
+      - name: Update Helm values with digest
+        run: |
+          cd gitops/apps/ecommerce-api
+          yq -i '.image.digest = "${{ needs.build.outputs.image-digest }}"' values.yaml
+
+      - name: Commit & push
+        run: |
+          cd gitops
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+          git add .
+          git commit -m "deploy: update image digest" || echo "No changes"
+          git push
