@@ -1,16 +1,26 @@
 replicaCount: 3
+
+# AWS infrastructure — fill these in after provisioning
+appDomain: "api.yourdomain.com"
+acmCertificateArn: "arn:aws:acm:us-east-1:<account-id>:certificate/<certificate-id>"
+awsRegion: "us-east-1"
+ecrRegistry: "<account-id>.dkr.ecr.us-east-1.amazonaws.com"
+
 image:
+  repository: "<account-id>.dkr.ecr.us-east-1.amazonaws.com/ecommerce-api"
   tag: "production-latest"
+
 ingress:
-  host: api.example.com
   tls:
     - secretName: api-tls
       hosts:
-        - api.example.com
+        - api.yourdomain.com
+
 autoscaling:
   enabled: true
   minReplicas: 3
   maxReplicas: 10
+
 resources:
   requests:
     cpu: 200m
@@ -18,5 +28,18 @@ resources:
   limits:
     cpu: 1000m
     memory: 1Gi
+
+# Non-sensitive env → ConfigMap
 env:
   NODE_ENV: production
+  PORT: "3001"
+  JWT_EXPIRES_IN: "900"
+  ALLOWED_ORIGINS: "https://yourdomain.com"
+
+# Sensitive env → Kubernetes Secret (populated via AWS Secrets Manager + External Secrets Operator)
+# Secret name must match envFromSecret in values.yaml: ecommerce-api-secret
+# Keys required in the secret:
+#   DATABASE_URL        → postgresql://<user>:<pass>@<rds-endpoint>:5432/ecommerce
+#   JWT_SECRET          → openssl rand -base64 64
+#   JWT_REFRESH_SECRET  → openssl rand -base64 64
+#   STRIPE_SECRET_KEY   → sk_live_... (from Stripe Dashboard)

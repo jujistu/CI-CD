@@ -6,8 +6,14 @@ metadata:
   namespace: ecommerce-production
 rules:
   - apiGroups: [""]
-    resources: [configmaps, secrets]
-    verbs: [get, list]
+    resources: ["secrets"]
+    resourceNames: ["db-credentials", "jwt-secret"]
+    verbs: ["get"]
+
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["app-config"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -37,21 +43,31 @@ spec:
     - Ingress
     - Egress
   ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
-      ports:
+   - from:
+     - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+       podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+     ports:
         - port: 3001
   egress:
-    # Allow DNS
-    - ports:
-        - port: 53
-          protocol: UDP
-    # Allow outbound to PostgreSQL
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ecommerce-production
-      ports:
-        - port: 5432
+  # DNS (UDP + TCP)
+  - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+    ports:
+      - port: 53
+        protocol: UDP
+      - port: 53
+        protocol: TCP
+
+  # PostgreSQL (target specific pod)
+  - to:
+      - podSelector:
+          matchLabels:
+            app: postgres
+    ports:
+      - port: 5432

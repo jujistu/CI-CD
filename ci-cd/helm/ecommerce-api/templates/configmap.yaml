@@ -5,6 +5,10 @@ metadata:
   labels:
     {{- include "ecommerce-api.labels" . | nindent 4 }}
 data:
+  # Non-sensitive app config
   {{- range $key, $value := .Values.env }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
+  # AWS infra config
+  AWS_REGION: {{ .Values.awsRegion | quote }}
+  APP_DOMAIN: {{ .Values.appDomain | quote }}

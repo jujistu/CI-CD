@@ -7,6 +7,9 @@ metadata:
     {{- include "ecommerce-api.labels" . | nindent 4 }}
   annotations:
     {{- toYaml .Values.ingress.annotations | nindent 4 }}
+    {{- if .Values.acmCertificateArn }}
+    alb.ingress.kubernetes.io/certificate-arn: {{ .Values.acmCertificateArn | quote }}
+    {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   {{- if .Values.ingress.tls }}
@@ -14,7 +17,7 @@ spec:
     {{- toYaml .Values.ingress.tls | nindent 4 }}
   {{- end }}
   rules:
-    - host: {{ .Values.ingress.host }}
+    - host: {{ .Values.appDomain }}
       http:
         paths:
           - path: /

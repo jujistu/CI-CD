@@ -12,12 +12,14 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { APP_GUARD } from '@nestjs/core';
 import { CartModule } from './modules/cart/cart.module';
+import configuration from './config/configuration';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      // envFilePath: '.env',
+      load: [configuration],
     }),
     ThrottlerModule.forRoot([
       {

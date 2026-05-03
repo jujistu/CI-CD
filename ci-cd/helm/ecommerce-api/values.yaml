@@ -1,10 +1,16 @@
 # Default values — overridden per environment in envs/
 replicaCount: 2
 
+# AWS — overridden per environment
+appDomain: "" # e.g. api.yourdomain.com
+acmCertificateArn: "" # arn:aws:acm:<region>:<account>:certificate/<id>
+awsRegion: "" # e.g. us-east-1
+ecrRegistry: "" # <account>.dkr.ecr.<region>.amazonaws.com
+
 image:
-  repository: ghcr.io/your-org/ecommerce-api
-  pullPolicy: IfNotPresent
-  tag: "sha-latest"  # CI updates this field per environment
+  repository: "" # set per env: <ecrRegistry>/ecommerce-api
+  pullPolicy: Always
+  tag: "sha-latest" # CI updates this field per environment
 
 service:
   type: ClusterIP
@@ -13,10 +19,16 @@ service:
 
 ingress:
   enabled: true
-  className: nginx
-  annotations: {}
-  host: api.example.com
+  className: alb
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: "[{\"HTTPS\":443},{\"HTTP\":80}]"
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
   tls: []
+
+namespace: ecommerce-production
 
 resources:
   requests:
@@ -50,6 +62,16 @@ readinessProbe:
   periodSeconds: 10
   failureThreshold: 3
 
+startupProbe:
+  httpGet:
+    path: /health
+    port: 3001
+  failureThreshold: 30
+  periodSeconds: 10
+
+topologySpread:
+  enabled: true
+
 # Rolling update — zero downtime
 strategy:
   type: RollingUpdate
@@ -57,13 +79,16 @@ strategy:
     maxSurge: 1
     maxUnavailable: 0
 
-# Env vars injected from Kubernetes Secret (not hardcoded)
+# Sensitive env vars injected from Kubernetes Secret
+# Secrets: DATABASE_URL, JWT_SECRET, JWT_REFRESH_SECRET, STRIPE_SECRET_KEY
 envFromSecret: ecommerce-api-secret
 
-# Extra env vars (non-sensitive)
+# Non-sensitive env vars → ConfigMap
 env:
   NODE_ENV: production
   PORT: "3001"
+  JWT_EXPIRES_IN: "900"
+  ALLOWED_ORIGINS: "" # set per env: https://yourdomain.com
 
 serviceAccount:
   create: true
