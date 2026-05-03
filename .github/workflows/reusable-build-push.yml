@@ -5,61 +5,56 @@ on:
     inputs:
       registry:
         type: string
-        required: false
         default: ghcr.io
       image-name:
         type: string
         required: true
       environment:
         type: string
-        required: true  # dev | staging | production
+        required: true
       push:
         type: boolean
-        required: false
         default: true
     outputs:
       image-tag:
-        description: "Full image tag pushed to registry"
-        value: ${{ jobs.build-push.outputs.image-tag }}
+        value: ${{ jobs.build.outputs.image-tag }}
+      image-digest:
+        value: ${{ jobs.build.outputs.image-digest }}
 
 jobs:
-  build-push:
-    name: Build & Push Docker Image
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to registry
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ inputs.registry }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Tagging strategy:
-      #   sha-<short-sha>          → immutable, traceable to commit
-      #   <semver>                 → release tags (v1.2.3)
-      #   <environment>-latest     → mutable env pointer for GitOps
-      - name: Extract Docker metadata
+      - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.image-name }}
+          images: ${{ inputs.registry }}/${{ github.repository_owner }}/${{
+            inputs.image-name }}
           tags: |
             type=sha,prefix=sha-,format=short
-            type=semver,pattern={{version}}
             type=raw,value=${{ inputs.environment }}-latest
 
-      - name: Build and push
+      - name: Build & Push
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: api
@@ -67,8 +62,80 @@ jobs:
           push: ${{ inputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            NODE_ENV=${{ inputs.environment }}
-          # Layer cache backed by GitHub Actions cache
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+# name: Reusable Build & Push
+
+# on:
+#   workflow_call:
+#     inputs:
+#       registry:
+#         type: string
+#         required: false
+#         default: ghcr.io
+#       image-name:
+#         type: string
+#         required: true
+#       environment:
+#         type: string
+#         required: true  # dev | staging | production
+#       push:
+#         type: boolean
+#         required: false
+#         default: true
+#     outputs:
+#       image-tag:
+#         description: "Full image tag pushed to registry"
+#         value: ${{ jobs.build-push.outputs.image-tag }}
+
+# jobs:
+#   build-push:
+#     name: Build & Push Docker Image
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: read
+#       packages: write
+#     outputs:
+#       image-tag: ${{ steps.meta.outputs.tags }}
+
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Set up Docker Buildx
+#         uses: docker/setup-buildx-action@v3
+
+#       - name: Log in to registry
+#         uses: docker/login-action@v3
+#         with:
+#           registry: ${{ inputs.registry }}
+#           username: ${{ github.actor }}
+#           password: ${{ secrets.GITHUB_TOKEN }}
+
+#       # Tagging strategy:
+#       #   sha-<short-sha>          → immutable, traceable to commit
+#       #   <semver>                 → release tags (v1.2.3)
+#       #   <environment>-latest     → mutable env pointer for GitOps
+#       - name: Extract Docker metadata
+#         id: meta
+#         uses: docker/metadata-action@v5
+#         with:
+#           images: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.image-name }}
+#           tags: |
+#             type=sha,prefix=sha-,format=short
+#             type=semver,pattern={{version}}
+#             type=raw,value=${{ inputs.environment }}-latest
+
+#       - name: Build and push
+#         uses: docker/build-push-action@v5
+#         with:
+#           context: api
+#           file: api/Dockerfile
+#           push: ${{ inputs.push }}
+#           tags: ${{ steps.meta.outputs.tags }}
+#           labels: ${{ steps.meta.outputs.labels }}
+#           build-args: |
+#             NODE_ENV=${{ inputs.environment }}
+#           # Layer cache backed by GitHub Actions cache
+#           cache-from: type=gha
+#           cache-to: type=gha,mode=max

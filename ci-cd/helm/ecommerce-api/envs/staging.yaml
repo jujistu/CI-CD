@@ -1,11 +1,26 @@
 replicaCount: 2
+
+# AWS infrastructure
+appDomain: "api.staging.yourdomain.com"
+acmCertificateArn: "arn:aws:acm:us-east-1:<account-id>:certificate/<certificate-id>"
+awsRegion: "us-east-1"
+ecrRegistry: "<account-id>.dkr.ecr.us-east-1.amazonaws.com"
+
 image:
+  repository: "<account-id>.dkr.ecr.us-east-1.amazonaws.com/ecommerce-api"
   tag: "staging-latest"
-ingress:
-  host: api.staging.example.com
+
 autoscaling:
   enabled: true
   minReplicas: 2
   maxReplicas: 5
+
+# Non-sensitive env → ConfigMap
 env:
   NODE_ENV: staging
+  PORT: "3001"
+  JWT_EXPIRES_IN: "900"
+  ALLOWED_ORIGINS: "https://staging.yourdomain.com"
+
+# Sensitive env → Kubernetes Secret: ecommerce-api-secret
+# Keys: DATABASE_URL, JWT_SECRET, JWT_REFRESH_SECRET, STRIPE_SECRET_KEY (use sk_test_... for staging)

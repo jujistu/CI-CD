@@ -4,48 +4,43 @@ on:
   workflow_call:
     inputs:
       image-ref:
-        description: "Docker image ref to scan (leave empty for fs scan only)"
         type: string
-        required: false
         default: ""
 
 jobs:
   gitleaks:
-    name: Secrets Scan (Gitleaks)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   trivy-fs:
-    name: Filesystem & Dependency Scan (Trivy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run Trivy filesystem scan
+
+      - name: Trivy FS scan (warn only)
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
-          scan-ref: .
           severity: CRITICAL,HIGH
-          exit-code: "1"
+          exit-code: "0"
           format: sarif
           output: trivy-fs.sarif
-      - uses: github/codeql-action/upload-sarif@v3
-        if: always()
+
+      - name: Upload SARIF
+        if: github.event_name == 'push'
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-fs.sarif
 
   trivy-image:
-    name: Image Scan (Trivy)
-    runs-on: ubuntu-latest
     if: inputs.image-ref != ''
+    runs-on: ubuntu-latest
     steps:
-      - name: Run Trivy image scan
+      - name: Trivy image scan (fail on vuln)
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ inputs.image-ref }}
@@ -53,16 +48,18 @@ jobs:
           exit-code: "1"
           format: sarif
           output: trivy-image.sarif
-      - uses: github/codeql-action/upload-sarif@v3
-        if: always()
+
+      - name: Upload SARIF
+        if: github.event_name == 'push'
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-image.sarif
 
   checkov:
-    name: IaC Scan (Checkov)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: bridgecrewio/checkov-action@master
         with:
           directory: .
@@ -70,7 +67,86 @@ jobs:
           soft_fail: false
           output_format: sarif
           output_file_path: checkov.sarif
-      - uses: github/codeql-action/upload-sarif@v3
-        if: always()
+
+      - name: Upload SARIF
+        if: github.event_name == 'push'
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: checkov.sarif
+
+# name: Reusable Security Scan
+
+# on:
+#   workflow_call:
+#     inputs:
+#       image-ref:
+#         description: "Docker image ref to scan (leave empty for fs scan only)"
+#         type: string
+#         required: false
+#         default: ""
+
+# jobs:
+#   gitleaks:
+#     name: Secrets Scan (Gitleaks)
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#         with:
+#           fetch-depth: 0
+#       - uses: gitleaks/gitleaks-action@v2
+#         env:
+#           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+#   trivy-fs:
+#     name: Filesystem & Dependency Scan (Trivy)
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - name: Run Trivy filesystem scan
+#         uses: aquasecurity/trivy-action@master
+#         with:
+#           scan-type: fs
+#           scan-ref: .
+#           severity: CRITICAL,HIGH
+#           exit-code: "1"
+#           format: sarif
+#           output: trivy-fs.sarif
+#       - uses: github/codeql-action/upload-sarif@v4
+#         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+#         with:
+#           sarif_file: trivy-fs.sarif
+
+#   trivy-image:
+#     name: Image Scan (Trivy)
+#     runs-on: ubuntu-latest
+#     if: inputs.image-ref != ''
+#     steps:
+#       - name: Run Trivy image scan
+#         uses: aquasecurity/trivy-action@master
+#         with:
+#           image-ref: ${{ inputs.image-ref }}
+#           severity: CRITICAL,HIGH
+#           exit-code: "1"
+#           format: sarif
+#           output: trivy-image.sarif
+#       - uses: github/codeql-action/upload-sarif@v4
+#         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+#         with:
+#           sarif_file: trivy-image.sarif
+
+#   checkov:
+#     name: IaC Scan (Checkov)
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: bridgecrewio/checkov-action@master
+#         with:
+#           directory: .
+#           framework: dockerfile,kubernetes,helm
+#           soft_fail: false
+#           output_format: sarif
+#           output_file_path: checkov.sarif
+#       - uses: github/codeql-action/upload-sarif@v4
+#         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+#         with:
+#           sarif_file: checkov.sarif

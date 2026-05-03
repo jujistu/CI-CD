@@ -2,61 +2,173 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "ecommerce-api.fullname" . }}
+  namespace: {{ .Values.namespace }}
   labels:
     {{- include "ecommerce-api.labels" . | nindent 4 }}
+
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+
   selector:
     matchLabels:
       {{- include "ecommerce-api.selectorLabels" . | nindent 6 }}
+
   strategy:
     type: {{ .Values.strategy.type }}
     rollingUpdate:
       maxSurge: {{ .Values.strategy.rollingUpdate.maxSurge }}
       maxUnavailable: {{ .Values.strategy.rollingUpdate.maxUnavailable }}
+
   template:
     metadata:
       labels:
         {{- include "ecommerce-api.selectorLabels" . | nindent 8 }}
       annotations:
         {{- toYaml .Values.podAnnotations | nindent 8 }}
+
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
+      automountServiceAccountToken: false
+
+      # 🔐 Pod-level security
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000
-        fsGroup: 1000
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+
       containers:
         - name: {{ .Chart.Name }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          # 🔐 Immutable image (digest, not tag)
+          image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+          imagePullPolicy: Always
+
           ports:
             - containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
-          # Non-sensitive env vars from ConfigMap
+
+          # Non-sensitive config
           envFrom:
             - configMapRef:
                 name: {{ include "ecommerce-api.fullname" . }}-config
-          # Sensitive env vars from Secret (externalized — never hardcoded)
-            - secretRef:
-                name: {{ .Values.envFromSecret }}
+
+          # Health checks
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
+
+          # Optional but recommended (prevents cold-start kill)
+          startupProbe:
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+
+          # 🔐 Container-level security
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+
           volumeMounts:
+            # Writable tmp (since root FS is read-only)
             - name: tmp
               mountPath: /tmp
+
+            # 🔐 Secrets mounted as files (NOT env)
+            - name: secrets
+              mountPath: /etc/secrets
+              readOnly: true
+
       volumes:
-        # Writable /tmp for Node.js temp files; root FS is read-only
         - name: tmp
           emptyDir: {}
+
+        - name: secrets
+          secret:
+            secretName: {{ .Values.envFromSecret }}
+
+      # 🧠 High availability (optional but strong)
+      {{- if .Values.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "ecommerce-api.selectorLabels" . | nindent 14 }}
+      {{- end }}
+
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: {{ include "ecommerce-api.fullname" . }}
+#   namespace: {{ .Values.namespace }}
+#   labels:
+#     {{- include "ecommerce-api.labels" . | nindent 4 }}
+# spec:
+#   {{- if not .Values.autoscaling.enabled }}
+#   replicas: {{ .Values.replicaCount }}
+#   {{- end }}
+#   selector:
+#     matchLabels:
+#       {{- include "ecommerce-api.selectorLabels" . | nindent 6 }}
+#   strategy:
+#     type: {{ .Values.strategy.type }}
+#     rollingUpdate:
+#       maxSurge: {{ .Values.strategy.rollingUpdate.maxSurge }}
+#       maxUnavailable: {{ .Values.strategy.rollingUpdate.maxUnavailable }}
+#   template:
+#     metadata:
+#       labels:
+#         {{- include "ecommerce-api.selectorLabels" . | nindent 8 }}
+#       annotations:
+#         {{- toYaml .Values.podAnnotations | nindent 8 }}
+#     spec:
+#       serviceAccountName: {{ .Values.serviceAccount.name }}
+#       securityContext:
+#         runAsNonRoot: true
+#         runAsUser: 10001
+#         runAsGroup: 10001
+#         fsGroup: 10001
+#         seccompProfile:
+#           type: RuntimeDefault
+#       containers:
+#         - name: {{ .Chart.Name }}
+#           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+#           imagePullPolicy: {{ .Values.image.pullPolicy }}
+#           ports:
+#             - containerPort: {{ .Values.service.targetPort }}
+#               protocol: TCP
+#           # Non-sensitive env vars from ConfigMap
+#           envFrom:
+#             - configMapRef:
+#                 name: {{ include "ecommerce-api.fullname" . }}-config
+#           # Sensitive env vars from Secret (externalized — never hardcoded)
+#             - secretRef:
+#                 name: {{ .Values.envFromSecret }}
+#           livenessProbe:
+#             {{- toYaml .Values.livenessProbe | nindent 12 }}
+#           readinessProbe:
+#             {{- toYaml .Values.readinessProbe | nindent 12 }}
+#           resources:
+#             {{- toYaml .Values.resources | nindent 12 }}
+#           securityContext:
+#             allowPrivilegeEscalation: false
+#             readOnlyRootFilesystem: true
+#             capabilities:
+#               drop: ["ALL"]
+#           volumeMounts:
+#             - name: tmp
+#               mountPath: /tmp
+#       volumes:
+#         # Writable /tmp for Node.js temp files; root FS is read-only
+#         - name: tmp
+#           emptyDir: {}

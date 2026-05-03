@@ -1,10 +1,18 @@
 replicaCount: 1
+
+# AWS infrastructure
+appDomain: "api.dev.yourdomain.com"
+acmCertificateArn: "arn:aws:acm:us-east-1:<account-id>:certificate/<certificate-id>"
+awsRegion: "us-east-1"
+ecrRegistry: "<account-id>.dkr.ecr.us-east-1.amazonaws.com"
+
 image:
+  repository: "<account-id>.dkr.ecr.us-east-1.amazonaws.com/ecommerce-api"
   tag: "dev-latest"
-ingress:
-  host: api.dev.example.com
+
 autoscaling:
   enabled: false
+
 resources:
   requests:
     cpu: 50m
@@ -12,5 +20,13 @@ resources:
   limits:
     cpu: 250m
     memory: 256Mi
+
+# Non-sensitive env → ConfigMap
 env:
   NODE_ENV: development
+  PORT: "3001"
+  JWT_EXPIRES_IN: "3600"
+  ALLOWED_ORIGINS: "https://dev.yourdomain.com,http://localhost:3000"
+
+# Sensitive env → Kubernetes Secret: ecommerce-api-secret
+# Keys: DATABASE_URL, JWT_SECRET, JWT_REFRESH_SECRET, STRIPE_SECRET_KEY (use sk_test_... for dev)
